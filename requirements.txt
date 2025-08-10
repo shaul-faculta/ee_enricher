@@ -1,0 +1,23 @@
+# Core dependencies
+flask==2.3.3
+flask-cors==4.0.0
+# Python 3.13 compatible binary wheels
+pandas==2.2.3
+numpy==2.2.1
+
+# Google Earth Engine
+earthengine-api==0.1.375
+
+# Google Cloud authentication
+google-auth==2.23.4
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+
+# File handling and data processing
+python-dotenv==1.0.0
+werkzeug==2.3.7
+
+# Additional utilities
+requests==2.31.0
+tqdm==4.66.1
+gunicorn==21.2.0

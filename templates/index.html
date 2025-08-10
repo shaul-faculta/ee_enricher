@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EE Enricher - Google Earth Engine Data Enrichment Tool</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            margin: 2rem auto;
+            padding: 2rem;
+            max-width: 1200px;
+        }
+        .step-card {
+            background: white;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08);
+            border-left: 4px solid #667eea;
+        }
+        .step-number {
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .upload-area {
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            padding: 2rem;
+            text-align: center;
+            background: #f8f9ff;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+        }
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background: #e8ebff;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 25px;
+            padding: 10px 25px;
+            font-weight: 500;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .progress-container {
+            display: none;
+            margin: 1rem 0;
+        }
+        .progress {
+            height: 25px;
+            border-radius: 15px;
+            background: #e9ecef;
+        }
+        .progress-bar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 15px;
+        }
+        .layer-card {
+            border: 1px solid #e9ecef;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .layer-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.1);
+        }
+        .layer-card.selected {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+        .preview-table {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .status-success { background: #28a745; }
+        .status-error { background: #dc3545; }
+        .status-warning { background: #ffc107; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="main-container">
+            <div class="text-center mb-4">
+                <h1 class="display-4 text-primary">
+                    <i class="fas fa-globe-americas"></i> EE Enricher
+                </h1>
+                <p class="lead text-muted">Enrich your CSV data with Google Earth Engine geospatial variables</p>
+            </div>
+
+            <!-- Step 1: File Upload -->
+            <div class="step-card">
+                <h4><span class="step-number">1</span>Upload CSV File</h4>
+                <div class="upload-area" id="uploadArea">
+                    <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+                    <h5>Drag and drop your CSV file here</h5>
+                    <p class="text-muted">or click to browse</p>
+                    <input type="file" id="fileInput" accept=".csv" style="display: none;">
+                </div>
+                <div id="fileInfo" class="mt-3" style="display: none;">
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i> File uploaded successfully!
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Column Mapping -->
+            <div class="step-card" id="columnMappingStep" style="display: none;">
+                <h4><span class="step-number">2</span>Map Columns</h4>
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>CSV Preview</h6>
+                        <div class="preview-table">
+                            <table class="table table-sm table-bordered" id="previewTable">
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Column Mapping</h6>
+                        <div class="mb-3">
+                            <label class="form-label">Point ID Column</label>
+                            <select class="form-select" id="pointIdSelect">
+                                <option value="">Select column...</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Latitude Column</label>
+                            <select class="form-select" id="latSelect">
+                                <option value="">Select column...</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Longitude Column</label>
+                            <select class="form-select" id="lonSelect">
+                                <option value="">Select column...</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Layer Selection -->
+            <div class="step-card" id="layerSelectionStep" style="display: none;">
+                <h4><span class="step-number">3</span>Select Earth Engine Layer</h4>
+                <div class="row align-items-end">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Common Datasets</label>
+                        <select id="datasetSelect" class="form-select" onchange="handleDatasetChange(this.value)">
+                            <option value="">Select a dataset...</option>
+                            {% if server_layers %}
+                                {% for layer in server_layers %}
+                                    <option value="{{ layer.id }}">
+                                        {{ layer.name }}{% if layer.id == 'CUSTOM' %} (Manual entry){% else %} ({{ layer.spatial_resolution }}, {{ layer.temporal_resolution }}){% endif %}
+                                    </option>
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="p-3 border rounded bg-light" id="customDatasetCard" style="cursor: pointer;">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="fas fa-tools me-2 text-secondary"></i>
+                                <strong>Custom Dataset</strong>
+                                <span class="ms-2 badge bg-warning text-dark">Manual</span>
+                            </div>
+                            <div id="customDatasetControls" style="display: none;">
+                                <label class="form-label">Custom Dataset ID</label>
+                                <input type="text" class="form-control" id="customGeeId" placeholder="e.g. MODIS/061/MOD13Q1">
+                                <div class="mt-2" id="detectedType" style="display:none;">
+                                    <span class="badge bg-secondary" id="detectedTypeBadge">Type</span>
+                                    <span class="ms-2 text-muted" id="detectedScaleText"></span>
+                                </div>
+                                <button type="button" class="btn btn-outline-primary btn-sm mt-2" id="fetchBandsBtn" onclick="fetchCustomBands()">Fetch Bands</button>
+                                <div class="form-text mt-2" id="customStatus"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3" id="layerDetails" style="display: none;">
+                    <h6>Layer Details</h6>
+                    <div id="layerInfo"></div>
+                    <div class="row mt-2">
+                        <div class="col-md-6">
+                            <label class="form-label">Variables / Bands</label>
+                            <div id="variableCheckboxes" class="d-flex flex-wrap gap-2"></div>
+                            <div class="form-text">Choose one or more variables to extract</div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex flex-column gap-2">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="selectAllBtn">Select All</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="clearAllBtn">Clear All</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: Date Range (if applicable) -->
+            <div class="step-card" id="dateRangeStep" style="display: none;">
+                <h4><span class="step-number">4</span>Date Range (Optional)</h4>
+                <div class="row">
+                    <div class="col-md-6">
+                        <label class="form-label">Start Date</label>
+                        <input type="date" class="form-control" id="startDate">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">End Date</label>
+                        <input type="date" class="form-control" id="endDate">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Enrichment -->
+            <div class="step-card" id="enrichmentStep" style="display: none;">
+                <h4><span class="step-number">5</span>Enrich Data</h4>
+                <button class="btn btn-primary btn-lg" id="enrichBtn">
+                    <i class="fas fa-magic"></i> Start Enrichment
+                </button>
+                <div class="row mt-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Batch size</label>
+                        <input type="number" class="form-control" id="batchSize" value="500" min="50" step="50">
+                    </div>
+                </div>
+                
+                <div class="progress-container" id="progressContainer">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span id="progressMessage">Processing...</span>
+                        <div>
+                            <span id="progressText">0%</span>
+                            <span id="etaText" class="ms-2 text-muted"></span>
+                        </div>
+                    </div>
+                    <div class="progress mb-2">
+                        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <button class="btn btn-outline-danger btn-sm" id="cancelBtn" style="display: none;">
+                        <i class="fas fa-times"></i> Cancel Job
+                    </button>
+                </div>
+
+                <div id="enrichmentResult" class="mt-3" style="display: none;">
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i> Data enriched successfully!
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Enriched Data Preview</h6>
+                            <div class="preview-table">
+                                <table class="table table-sm table-bordered" id="resultTable">
+                                    <thead></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Download</h6>
+                            <button class="btn btn-success" id="downloadBtn">
+                                <i class="fas fa-download"></i> Download Enriched CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Status Bar -->
+            <div class="mt-4 p-3 bg-light rounded">
+                <h6><i class="fas fa-info-circle"></i> System Status</h6>
+                <div id="systemStatus">
+                    <span class="status-indicator status-warning"></span>
+                    <span>Checking system status...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Server-provided layers for immediate availability (avoids timing issues)
+        window.serverLayers = window.serverLayers || (
+            {% if server_layers %} {{ server_layers|tojson|safe }} {% else %} [] {% endif %}
+        );
+        // Global variables
+        let uploadedFile = null;
+        let columnInfo = null;
+        let selectedLayer = null;
+        let enrichedData = null;
+        let currentJobId = null;
+        let layersById = {};
+
+        // Initialize application
+        document.addEventListener('DOMContentLoaded', function() {
+            checkSystemStatus();
+            setupEventListeners();
+            // Seed layersById from server-rendered layers immediately
+            if (Array.isArray(window.serverLayers)) {
+                window.serverLayers.forEach(l => { layersById[l.id] = l; });
+            }
+            loadLayers();
+        });
+
+        function checkSystemStatus() {
+            fetch('/api/health')
+                .then(response => response.json())
+                .then(data => {
+                    const statusElement = document.getElementById('systemStatus');
+                    if (data.earth_engine_initialized) {
+                        statusElement.innerHTML = '<span class="status-indicator status-success"></span><span>Earth Engine initialized successfully</span>';
+                    } else {
+                        statusElement.innerHTML = '<span class="status-indicator status-error"></span><span>Earth Engine not initialized - check credentials</span>';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('systemStatus').innerHTML = '<span class="status-indicator status-error"></span><span>System error</span>';
+                });
+        }
+
+        function setupEventListeners() {
+            // File upload
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+
+            uploadArea.addEventListener('click', () => fileInput.click());
+            uploadArea.addEventListener('dragover', handleDragOver);
+            uploadArea.addEventListener('drop', handleDrop);
+            fileInput.addEventListener('change', handleFileSelect);
+
+            // Column mapping
+            document.getElementById('pointIdSelect').addEventListener('change', validateColumnMapping);
+            document.getElementById('latSelect').addEventListener('change', validateColumnMapping);
+            document.getElementById('lonSelect').addEventListener('change', validateColumnMapping);
+
+            // Enrichment
+            document.getElementById('enrichBtn').addEventListener('click', startEnrichment);
+            document.getElementById('downloadBtn').addEventListener('click', downloadEnrichedData);
+            document.getElementById('fetchBandsBtn').addEventListener('click', fetchCustomBands);
+            const customCard = document.getElementById('customDatasetCard');
+            if (customCard) {
+                customCard.addEventListener('click', function() {
+                    const select = document.getElementById('datasetSelect');
+                    if (select) {
+                        select.value = 'CUSTOM';
+                        handleDatasetChange('CUSTOM');
+                    }
+                });
+            }
+            
+            // Variable selection controls
+            document.getElementById('selectAllBtn').addEventListener('click', selectAllVariables);
+            document.getElementById('clearAllBtn').addEventListener('click', clearAllVariables);
+            
+            // Progress controls
+            document.getElementById('cancelBtn').addEventListener('click', cancelEnrichmentJob);
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            document.getElementById('uploadArea').classList.add('dragover');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            document.getElementById('uploadArea').classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+
+        function handleFile(file) {
+            if (!file.name.toLowerCase().endsWith('.csv')) {
+                alert('Please select a CSV file');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                uploadedFile = data.filename;
+                columnInfo = data.column_info;
+                
+                document.getElementById('fileInfo').style.display = 'block';
+                showColumnMapping();
+            })
+            .catch(error => {
+                alert('Error uploading file: ' + error);
+            });
+        }
+
+        function showColumnMapping() {
+            // Populate preview table
+            const table = document.getElementById('previewTable');
+            const thead = table.querySelector('thead');
+            const tbody = table.querySelector('tbody');
+
+            // Headers
+            thead.innerHTML = '<tr>' + columnInfo.columns.map(col => `<th>${col}</th>`).join('') + '</tr>';
+            
+            // Data
+            tbody.innerHTML = columnInfo.preview.map(row => 
+                '<tr>' + columnInfo.columns.map(col => `<td>${row[col] || ''}</td>`).join('') + '</tr>'
+            ).join('');
+
+            // Populate select dropdowns
+            const selects = ['pointIdSelect', 'latSelect', 'lonSelect'];
+            selects.forEach(selectId => {
+                const select = document.getElementById(selectId);
+                select.innerHTML = '<option value="">Select column...</option>';
+                columnInfo.columns.forEach(col => {
+                    const option = document.createElement('option');
+                    option.value = col;
+                    option.textContent = col;
+                    select.appendChild(option);
+                });
+            });
+
+            // Apply suggestions
+            if (columnInfo.suggestions.pointid) {
+                document.getElementById('pointIdSelect').value = columnInfo.suggestions.pointid;
+            }
+            if (columnInfo.suggestions.lat) {
+                document.getElementById('latSelect').value = columnInfo.suggestions.lat;
+            }
+            if (columnInfo.suggestions.lon) {
+                document.getElementById('lonSelect').value = columnInfo.suggestions.lon;
+            }
+
+            document.getElementById('columnMappingStep').style.display = 'block';
+            validateColumnMapping();
+        }
+
+        function validateColumnMapping() {
+            const pointId = document.getElementById('pointIdSelect').value;
+            const lat = document.getElementById('latSelect').value;
+            const lon = document.getElementById('lonSelect').value;
+
+            if (pointId && lat && lon) {
+                document.getElementById('layerSelectionStep').style.display = 'block';
+                // Reset previous variable selections when remapping
+                const variableContainer = document.getElementById('variableCheckboxes');
+                variableContainer.innerHTML = '';
+                document.getElementById('layerDetails').style.display = 'none';
+                document.getElementById('customDatasetControls').style.display = 'none';
+                document.getElementById('dateRangeStep').style.display = 'none';
+                document.getElementById('enrichmentStep').style.display = 'none';
+            }
+        }
+
+        function loadLayers() {
+            fetch('/api/layers')
+                .then(response => response.json())
+                .then(data => {
+                    const select = document.getElementById('datasetSelect');
+                    select.innerHTML = '<option value="">Select a dataset...</option>';
+
+                    if (!data || !Array.isArray(data.layers)) {
+                        console.error('Invalid /api/layers response', data);
+                        return;
+                    }
+
+                    // Build index for reliable retrieval without dataset JSON serialization
+                    layersById = {};
+                    data.layers.forEach(layer => {
+                        layersById[layer.id] = layer;
+                        const opt = document.createElement('option');
+                        opt.value = layer.id;
+                        opt.textContent = layer.id === 'CUSTOM'
+                            ? `${layer.name} (Manual entry)`
+                            : `${layer.name} (${layer.spatial_resolution}, ${layer.temporal_resolution})`;
+                        select.appendChild(opt);
+                    });
+
+                    // Keep layer selection hidden until CSV is uploaded and columns mapped
+
+                    // Change handler (JS)
+                    select.addEventListener('change', function() {
+                        handleDatasetChange(this.value);
+                    });
+
+                    // Do not auto-select; wait for user to upload CSV and map columns
+                })
+                .catch(error => {
+                    console.error('Error loading layers:', error);
+                });
+        }
+
+        function handleDatasetChange(selectedId) {
+            if (!selectedId) {
+                selectedLayer = null;
+                document.getElementById('layerDetails').style.display = 'none';
+                document.getElementById('customDatasetControls').style.display = 'none';
+                updateDateRangeVisibility();
+                return;
+            }
+            // Fallback if layersById not populated yet
+            if (!layersById[selectedId] && Array.isArray(window.serverLayers)) {
+                const found = window.serverLayers.find(l => l.id === selectedId);
+                if (found) {
+                    layersById[selectedId] = found;
+                }
+            }
+            if (!layersById[selectedId] && selectedId === 'CUSTOM') {
+                layersById['CUSTOM'] = { id: 'CUSTOM', name: 'Custom Dataset', variables: [], temporal_resolution: '', spatial_resolution: '' };
+            }
+            selectedLayer = layersById[selectedId] || null;
+            showLayerDetails();
+            updateDateRangeVisibility();
+        }
+
+        function showLayerDetails() {
+            if (!selectedLayer) {
+                return;
+            }
+            const detailsDiv = document.getElementById('layerDetails');
+            const infoDiv = document.getElementById('layerInfo');
+            
+            const spatialHtml = (selectedLayer.id === 'CUSTOM')
+                ? ''
+                : ('<p><strong>Spatial Resolution:</strong> ' + selectedLayer.spatial_resolution + '</p>');
+            const temporalHtml = '<p><strong>Temporal Resolution:</strong> ' + selectedLayer.temporal_resolution + '</p>';
+            infoDiv.innerHTML = spatialHtml + temporalHtml;
+            
+            detailsDiv.style.display = 'block';
+
+            // Populate variable select for curated layers
+            const variableContainer = document.getElementById('variableCheckboxes');
+            variableContainer.innerHTML = '';
+            
+            if (selectedLayer && selectedLayer.id === 'CUSTOM') {
+                // For custom datasets, show the custom controls and wait for user to fetch bands
+                console.log('Custom Dataset selected, showing controls');
+                document.getElementById('customDatasetControls').style.display = 'block';
+                // Clear any existing variables
+                variableContainer.innerHTML = '';
+            } else if (selectedLayer) {
+                // For curated layers, hide custom controls and show variables
+                document.getElementById('customDatasetControls').style.display = 'none';
+                selectedLayer.variables.forEach(v => {
+                    const id = `var_${v}`;
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'form-check form-check-inline';
+                    wrapper.innerHTML = `
+                        <input class="form-check-input" type="checkbox" id="${id}" value="${v}">
+                        <label class="form-check-label" for="${id}">${v}</label>
+                    `;
+                    variableContainer.appendChild(wrapper);
+                });
+            } else {
+                document.getElementById('customDatasetControls').style.display = 'none';
+            }
+        }
+
+        function updateDateRangeVisibility(assetType) {
+            const dateStep = document.getElementById('dateRangeStep');
+            if (!selectedLayer) {
+                dateStep.style.display = 'none';
+                return;
+            }
+            // Show for curated non-static; for custom, show after bands fetched (assetType)
+            if (selectedLayer.id !== 'CUSTOM') {
+                dateStep.style.display = (selectedLayer.temporal_resolution !== 'static') ? 'block' : 'none';
+            } else {
+                dateStep.style.display = (assetType === 'ImageCollection') ? 'block' : 'none';
+            }
+            document.getElementById('enrichmentStep').style.display = 'block';
+        }
+
+        function startEnrichment() {
+            const columnMapping = {
+                pointid: document.getElementById('pointIdSelect').value,
+                lat: document.getElementById('latSelect').value,
+                lon: document.getElementById('lonSelect').value
+            };
+
+            const dateRange = {};
+            if (document.getElementById('startDate').value) {
+                dateRange.start = document.getElementById('startDate').value;
+            }
+            if (document.getElementById('endDate').value) {
+                dateRange.end = document.getElementById('endDate').value;
+            }
+
+            // Include selected variables via checkboxes
+            const selectedOptions = Array.from(document.querySelectorAll('#variableCheckboxes input[type="checkbox"]:checked')).map(c => c.value);
+            if (selectedOptions.length === 0) {
+                alert('Please select at least one variable/band');
+                return;
+            }
+
+            const layerConfig = Object.assign({}, selectedLayer, { selected_variables: selectedOptions });
+
+            // Custom dataset overrides
+            if (selectedLayer.id === 'CUSTOM') {
+                const customGeeId = document.getElementById('customGeeId').value.trim();
+                if (!customGeeId) {
+                    alert('Please provide a custom dataset ID');
+                    return;
+                }
+                layerConfig.gee_id = customGeeId;
+            }
+
+            const requestData = {
+                filename: uploadedFile,
+                column_mapping: columnMapping,
+                layer_config: layerConfig,
+                batch_size: parseInt(document.getElementById('batchSize').value, 10) || 500
+            };
+
+            if (Object.keys(dateRange).length > 0) {
+                requestData.date_range = dateRange;
+            }
+
+            // Show progress
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('enrichBtn').disabled = true;
+
+            // Start background job
+            fetch('/api/enrich/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+                currentJobId = data.job_id;
+                pollJobStatus();
+            })
+            .catch(error => {
+                alert('Error during enrichment: ' + error);
+            })
+            .finally(() => {
+                document.getElementById('enrichBtn').disabled = false;
+            });
+        }
+
+        function pollJobStatus() {
+            if (!currentJobId) return;
+
+            const intervalId = setInterval(() => {
+                fetch(`/api/enrich/status/${currentJobId}`)
+                    .then(response => response.json())
+                    .then(status => {
+                        if (status.error) {
+                            clearInterval(intervalId);
+                            alert('Job error: ' + status.error);
+                            return;
+                        }
+                        
+                        const progress = status.progress || 0;
+                        document.getElementById('progressBar').style.width = progress + '%';
+                        document.getElementById('progressText').textContent = progress + '%';
+                        
+                        // Update progress message
+                        if (status.message) {
+                            document.getElementById('progressMessage').textContent = status.message;
+                        }
+                        
+                        // Show/hide cancel button
+                        if (status.status === 'running' || status.status === 'pending') {
+                            document.getElementById('cancelBtn').style.display = 'inline-block';
+                        } else {
+                            document.getElementById('cancelBtn').style.display = 'none';
+                        }
+                        
+                        // Show ETA if available
+                        const etaText = document.getElementById('etaText');
+                        if (status.eta_seconds && status.eta_seconds > 0) {
+                            const etaMinutes = Math.ceil(status.eta_seconds / 60);
+                            etaText.textContent = `ETA: ~${etaMinutes} min`;
+                        } else {
+                            etaText.textContent = '';
+                        }
+                        
+                        if (status.status === 'completed') {
+                            clearInterval(intervalId);
+                            fetch(`/api/enrich/result/${currentJobId}`)
+                                .then(r => r.json())
+                                .then(result => {
+                                    if (result.error) {
+                                        alert('Error fetching result: ' + result.error);
+                                        return;
+                                    }
+                                    enrichedData = result;
+                                    showEnrichmentResult();
+                                });
+                        } else if (status.status === 'failed') {
+                            clearInterval(intervalId);
+                            alert('Job failed: ' + (status.message || 'Unknown error'));
+                            if (status.last_error) {
+                                console.error('Detailed error:', status.last_error);
+                            }
+                        } else if (status.status === 'canceled') {
+                            clearInterval(intervalId);
+                            alert('Job was canceled');
+                        }
+                    })
+                    .catch(() => {
+                        clearInterval(intervalId);
+                        alert('Failed to poll job status');
+                    });
+            }, 1000);
+        }
+
+        function fetchCustomBands() {
+            const customGeeId = document.getElementById('customGeeId').value.trim();
+            if (!customGeeId) {
+                alert('Enter a custom dataset ID first');
+                return;
+            }
+            console.log('Fetching bands for custom dataset:', customGeeId);
+            const statusEl = document.getElementById('customStatus');
+            if (statusEl) {
+                statusEl.textContent = 'Fetching bands...';
+            }
+            // Ensure layer details section visible
+            document.getElementById('layerDetails').style.display = 'block';
+            fetch('/api/dataset_bands', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gee_id: customGeeId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error fetching bands: ' + data.error);
+                    if (statusEl) statusEl.textContent = '';
+                    return;
+                }
+                const variableContainer = document.getElementById('variableCheckboxes');
+                variableContainer.innerHTML = '';
+                data.bands.forEach(b => {
+                    const id = `var_${b}`;
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'form-check form-check-inline';
+                    wrapper.innerHTML = `
+                        <input class="form-check-input" type="checkbox" id="${id}" value="${b}">
+                        <label class="form-check-label" for="${id}">${b}</label>
+                    `;
+                    variableContainer.appendChild(wrapper);
+                });
+                
+                // Show detected type and scale
+                const detectedType = document.getElementById('detectedType');
+                const badge = document.getElementById('detectedTypeBadge');
+                const scaleText = document.getElementById('detectedScaleText');
+                
+                if (data.type) {
+                    badge.textContent = data.type;
+                    badge.className = 'badge ' + (data.type === 'ImageCollection' ? 'bg-info' : 'bg-secondary');
+                    detectedType.style.display = 'block';
+                    
+                    if (data.scale_m) {
+                        scaleText.textContent = `Native scale: ${data.scale_m.toFixed(0)}m`;
+                    }
+                } else {
+                    detectedType.style.display = 'none';
+                }
+
+                // Adjust date range visibility based on detected asset type
+                updateDateRangeVisibility(data.type || null);
+                if (statusEl) statusEl.textContent = 'Bands loaded. Select at least one.';
+            })
+            .catch(err => {
+                alert('Failed to fetch bands: ' + err);
+                if (statusEl) statusEl.textContent = '';
+            });
+        }
+
+        // Ensure functions are available on window for inline onclick and debugging
+        window.fetchCustomBands = fetchCustomBands;
+        window.updateDateRangeVisibility = updateDateRangeVisibility;
+        window.handleDatasetChange = handleDatasetChange;
+
+        function selectAllVariables() {
+            const checkboxes = document.querySelectorAll('#variableCheckboxes input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = true);
+        }
+
+        function clearAllVariables() {
+            const checkboxes = document.querySelectorAll('#variableCheckboxes input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = false);
+        }
+
+        function showEnrichmentResult() {
+            const resultDiv = document.getElementById('enrichmentResult');
+            const table = document.getElementById('resultTable');
+            
+            // Populate result table
+            if (enrichedData.preview && enrichedData.preview.length > 0) {
+                const columns = Object.keys(enrichedData.preview[0]);
+                const thead = table.querySelector('thead');
+                const tbody = table.querySelector('tbody');
+
+                thead.innerHTML = '<tr>' + columns.map(col => `<th>${col}</th>`).join('') + '</tr>';
+                tbody.innerHTML = enrichedData.preview.map(row => 
+                    '<tr>' + columns.map(col => `<td>${row[col] || ''}</td>`).join('') + '</tr>'
+                ).join('');
+            }
+
+            resultDiv.style.display = 'block';
+        }
+
+        function downloadEnrichedData() {
+            if (enrichedData && enrichedData.output_filename) {
+                window.open(`/api/download/${enrichedData.output_filename}`, '_blank');
+            }
+        }
+    </script>
+</body>
+</html>

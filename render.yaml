@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ee-enricher
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      # Supply your own credentials via Render dashboard or secrets store
+      # - key: GOOGLE_APPLICATION_CREDENTIALS
+      #   value: /opt/render/project/src/service-account.json
+      # - key: GOOGLE_CLOUD_PROJECT_ID
+      #   value: your-project-id
+      # - key: SERVICE_ACCOUNT_EMAIL
+      #   value: your-sa@your-project.iam.gserviceaccount.com
+
