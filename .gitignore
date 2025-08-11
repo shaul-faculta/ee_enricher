@@ -60,3 +60,5 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+uploads/*.csv
+enriched_*.csv

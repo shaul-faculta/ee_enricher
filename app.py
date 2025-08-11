@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import pandas as pd
 import ee
@@ -216,7 +217,7 @@ def _safe_enrich_with_retries(points_df: pd.DataFrame, layer_config: dict, date_
             logger.warning(f"Batch enrichment failed (attempt {attempt}/{max_retries}). Retrying in {sleep_seconds:.1f}s. Error: {exc}")
             time.sleep(sleep_seconds)
 
-def _process_enrichment_job(job_id: str, filepath: str, column_mapping: dict, layer_config: dict, date_range: Optional[dict], batch_size: int):
+def _process_enrichment_job(job_id: str, filepath: str, column_mapping: dict, layer_config: dict, date_range: Optional[dict], batch_size: int, accumulate: bool = False, base_output_filename: Optional[str] = None):
     """Background job to enrich data in batches and update job status."""
     try:
         jobs[job_id].update({
@@ -226,7 +227,13 @@ def _process_enrichment_job(job_id: str, filepath: str, column_mapping: dict, la
         jobs[job_id]['start_time'] = time.time()
         jobs[job_id]['avg_batch_seconds'] = None
 
-        original_df = pd.read_csv(filepath)
+        # Determine base DataFrame: either original upload or previously enriched output (for accumulation)
+        base_df_path = None
+        if accumulate and base_output_filename:
+            candidate_path = os.path.join(app.config['UPLOAD_FOLDER'], base_output_filename)
+            if os.path.exists(candidate_path):
+                base_df_path = candidate_path
+        original_df = pd.read_csv(base_df_path or filepath)
 
         # Rename columns according to mapping
         working_df = original_df.rename(columns={
@@ -234,6 +241,32 @@ def _process_enrichment_job(job_id: str, filepath: str, column_mapping: dict, la
             column_mapping['lat']: 'lat',
             column_mapping['lon']: 'lon'
         })
+
+        # Clean up any duplicate-suffixed columns from prior merges (e.g., *_x, *_y)
+        def _collapse_duplicate_band_columns(df: pd.DataFrame) -> pd.DataFrame:
+            suffix_regex = re.compile(r'^(?P<base>.+)_(x|y)$')
+            base_to_suffix_cols = {}
+            for col in list(df.columns):
+                match = suffix_regex.match(col)
+                if match and match.group('base') != 'pointid':
+                    base = match.group('base')
+                    base_to_suffix_cols.setdefault(base, []).append(col)
+            # Combine suffix columns into base and drop suffix versions
+            for base, cols in base_to_suffix_cols.items():
+                if base in df.columns:
+                    series = df[base]
+                    for c in cols:
+                        series = series.combine_first(df[c])
+                    df[base] = series
+                else:
+                    series = None
+                    for c in cols:
+                        series = df[c] if series is None else series.combine_first(df[c])
+                    df[base] = series
+                df.drop(columns=cols, inplace=True, errors='ignore')
+            return df
+
+        working_df = _collapse_duplicate_band_columns(working_df)
 
         # Validate coordinates
         if not all(working_df['lat'].between(-90, 90)) or not all(working_df['lon'].between(-180, 180)):
@@ -288,10 +321,19 @@ def _process_enrichment_job(job_id: str, filepath: str, column_mapping: dict, la
         else:
             all_enriched = pd.DataFrame(columns=['pointid'])
 
-        result_df = working_df.merge(all_enriched, on='pointid', how='left')
+        # When accumulating, avoid duplicate columns by dropping incoming columns that already exist
+        incoming_df = all_enriched
+        if accumulate:
+            existing_cols = set(working_df.columns)
+            safe_cols = ['pointid'] + [c for c in incoming_df.columns if c != 'pointid' and c not in existing_cols]
+            incoming_df = incoming_df[safe_cols]
 
-        # Save enriched CSV
-        output_filename = f"enriched_{os.path.basename(filepath)}"
+        result_df = working_df.merge(incoming_df, on='pointid', how='left')
+        # Final cleanup of any residual duplicate-suffix columns
+        result_df = _collapse_duplicate_band_columns(result_df)
+
+        # Save enriched CSV (reuse same output for accumulation, or create new on first pass)
+        output_filename = base_output_filename if (accumulate and base_output_filename) else f"enriched_{os.path.basename(filepath)}"
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
         result_df.to_csv(output_path, index=False)
 
@@ -352,28 +394,53 @@ def enrich_data_with_gee(points_df, layer_config, date_range=None):
         if not selected_variables:
             raise Exception('No variables selected')
 
+        # Temporal strategy options for ImageCollections
+        temporal_strategy = layer_config.get('temporal_strategy') or 'mean'  # default to 'mean'
+        include_std = bool(layer_config.get('include_std'))
+
+        # Helper to build an aggregated image from an ImageCollection
+        def build_image_from_collection(collection: ee.ImageCollection, bands: List[str]) -> ee.Image:
+            coll = collection.select(bands)
+            # If a date range is provided, filter accordingly
+            if date_range and date_range.get('start') and date_range.get('end'):
+                coll = coll.filterDate(date_range['start'], date_range['end'])
+
+            # Choose base image based on strategy
+            if temporal_strategy == 'mean':
+                base_img = coll.mean()
+            elif temporal_strategy == 'oldest':
+                base_img = coll.sort('system:time_start', True).first()
+            else:  # default and 'most_recent'
+                base_img = coll.sort('system:time_start', False).first()
+
+            if include_std:
+                std_img = coll.reduce(ee.Reducer.stdDev())
+                # Ensure std band names end with _std matching selected order
+                std_band_names = [f"{b}_std" for b in bands]
+                std_img = std_img.rename(std_band_names)
+                return base_img.addBands(std_img)
+            return base_img
+
         # Get the appropriate Earth Engine dataset based on layer_config
         if layer_config['id'] == 'TERRACLIMATE':
             dataset = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
-            if date_range:
-                dataset = dataset.filterDate(date_range['start'], date_range['end'])
-            image = dataset.select(selected_variables).first()
+            image = build_image_from_collection(dataset, selected_variables)
         elif layer_config['id'] == 'MODIS_NDVI':
             dataset = ee.ImageCollection('MODIS/061/MOD13Q1')
-            if date_range:
-                dataset = dataset.filterDate(date_range['start'], date_range['end'])
-            image = dataset.select(selected_variables).first()
+            image = build_image_from_collection(dataset, selected_variables)
         elif layer_config['id'] == 'WORLDCLIM':
             image = ee.ImageCollection('WORLDCLIM/V1/BIO').first().select(selected_variables)
         elif layer_config['id'] == 'SRTM':
             image = ee.Image('USGS/SRTMGL1_003').select(selected_variables)
         elif layer_config['id'] == 'CUSTOM':
-            # Custom dataset: user provides gee_id and variables; auto-detect asset type
+            # Custom dataset: if temporal strategy provided, treat as ImageCollection; otherwise use auto-detect builder
             gee_id = layer_config['gee_id']
-            selected_variable = layer_config.get('selected_variable')
-            if layer_config.get('selected_variables'):
-                selected_variable = layer_config['selected_variables']
-            image = build_image_from_asset(gee_id, selected_variable, date_range)
+            if temporal_strategy:
+                collection = ee.ImageCollection(gee_id)
+                image = build_image_from_collection(collection, selected_variables)
+            else:
+                # Auto-detect and select first image if ImageCollection
+                image = build_image_from_asset(gee_id, selected_variables, date_range)
         else:
             raise Exception(f"Unsupported layer: {layer_config['id']}")
         
@@ -381,7 +448,7 @@ def enrich_data_with_gee(points_df, layer_config, date_range=None):
         if layer_config['id'] in {'TERRACLIMATE', 'MODIS_NDVI', 'WORLDCLIM', 'SRTM', 'CUSTOM'}:
             image = image.resample('bilinear')
 
-        # Use the dataset's native nominal scale
+        # Use the dataset's native nominal scale (derive from first band)
         native_scale = image.projection().nominalScale().getInfo()
 
         # Extract values at points. Use sampleRegions so band names are preserved as columns
@@ -513,6 +580,8 @@ def start_enrichment_job():
         layer_config = data.get('layer_config')
         date_range = data.get('date_range')
         batch_size = int(data.get('batch_size', 500))
+        accumulate = bool(data.get('accumulate', False))
+        base_output_filename = data.get('base_output_filename')
 
         if not all([filename, column_mapping, layer_config]):
             return jsonify({'error': 'Missing required parameters'}), 400
@@ -528,6 +597,17 @@ def start_enrichment_job():
         if not os.path.exists(filepath):
             return jsonify({'error': 'Uploaded file not found'}), 404
 
+        # If the client did not explicitly request accumulation but a prior enriched file exists,
+        # default to appending to that file to preserve previously pulled columns.
+        try:
+            default_output_filename = f"enriched_{os.path.basename(filepath)}"
+            default_output_path = os.path.join(app.config['UPLOAD_FOLDER'], default_output_filename)
+            if not accumulate and os.path.exists(default_output_path):
+                accumulate = True
+                base_output_filename = default_output_filename
+        except Exception:
+            pass
+
         job_id = uuid.uuid4().hex
         jobs[job_id] = {
             'status': 'pending',
@@ -541,7 +621,7 @@ def start_enrichment_job():
 
         thread = threading.Thread(
             target=_process_enrichment_job,
-            args=(job_id, filepath, column_mapping, layer_config, date_range, batch_size),
+            args=(job_id, filepath, column_mapping, layer_config, date_range, batch_size, accumulate, base_output_filename),
             daemon=True,
         )
         thread.start()
