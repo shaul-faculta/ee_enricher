@@ -111,6 +111,54 @@
         .status-success { background: #28a745; }
         .status-error { background: #dc3545; }
         .status-warning { background: #ffc107; }
+        /* Variables UI emphasis */
+        .variables-panel {
+            border: 2px solid #c9d6ff;
+            background: linear-gradient(180deg, #f9fbff 0%, #ffffff 80%);
+            border-radius: 14px;
+            padding: 14px 16px;
+            box-shadow: 0 6px 18px rgba(102, 126, 234, 0.12);
+        }
+        .variables-panel .panel-title {
+            display: flex;
+            align-items: center;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+        .variables-panel .panel-title .count-badge {
+            margin-left: auto;
+            background: #eef2ff;
+            color: #4f46e5;
+            border: 1px solid #c7d2fe;
+            padding: 2px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+        }
+        .variable-pill {
+            display: inline-block;
+            margin: 4px 6px 6px 0;
+        }
+        .variable-pill input[type="checkbox"] {
+            display: none;
+        }
+        .variable-pill label {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 999px;
+            border: 1px solid #d0d7ff;
+            background: #f4f6ff;
+            color: #2f3b59;
+            cursor: pointer;
+            transition: all 0.15s ease-in-out;
+            user-select: none;
+        }
+        .variable-pill input[type="checkbox"]:checked + label {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #ffffff;
+            border-color: transparent;
+            box-shadow: 0 3px 10px rgba(118, 75, 162, 0.25);
+        }
     </style>
 </head>
 <body>
@@ -217,15 +265,15 @@
                     <h6>Layer Details</h6>
                     <div id="layerInfo"></div>
                     <div class="row mt-2">
-                        <div class="col-md-6">
-                            <label class="form-label">Variables / Bands</label>
-                            <div id="variableCheckboxes" class="d-flex flex-wrap gap-2"></div>
-                            <div class="form-text">Choose one or more variables to extract</div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="d-flex flex-column gap-2">
-                                <button type="button" class="btn btn-outline-secondary btn-sm" id="selectAllBtn">Select All</button>
-                                <button type="button" class="btn btn-outline-secondary btn-sm" id="clearAllBtn">Clear All</button>
+                        <div class="col-md-12">
+                            <div class="variables-panel">
+                                <div class="panel-title">
+                                    <i class="fas fa-sliders-h me-2 text-primary"></i>
+                                    Variables / Bands
+                                    <span id="selectedCount" class="count-badge">0 selected</span>
+                                </div>
+                                <div id="variableCheckboxes" class="d-flex flex-wrap gap-2"></div>
+                                <div class="form-text">Choose one or more variables to extract</div>
                             </div>
                         </div>
                     </div>
@@ -244,6 +292,33 @@
                         <label class="form-label">End Date</label>
                         <input type="date" class="form-control" id="endDate">
                     </div>
+                </div>
+                <div class="mt-3" id="temporalOptions" style="display: none;">
+                    <h6>ImageCollection Options</h6>
+                    <div class="row">
+                        <div class="col-md-12">
+                            <label class="form-label">When a date range is selected, choose how to aggregate over time:</label>
+                            <div class="d-flex align-items-center gap-3 flex-wrap">
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="radio" name="temporalStrategy" id="ts_mean" value="mean" checked>
+                                    <label class="form-check-label" for="ts_mean">Calculate Mean</label>
+                                </div>
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="checkbox" id="includeStd">
+                                    <label class="form-check-label" for="includeStd">Add a Standard Deviation Column</label>
+                                </div>
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="radio" name="temporalStrategy" id="ts_most_recent" value="most_recent">
+                                    <label class="form-check-label" for="ts_most_recent">Fetch values from the most recent layer</label>
+                                </div>
+                                <div class="form-check me-3">
+                                    <input class="form-check-input" type="radio" name="temporalStrategy" id="ts_oldest" value="oldest">
+                                    <label class="form-check-label" for="ts_oldest">Fetch values from the oldest layer</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-text">Standard deviation columns will be named as [band]_std.</div>
                 </div>
             </div>
 
@@ -292,9 +367,14 @@
                         </div>
                         <div class="col-md-6">
                             <h6>Download</h6>
-                            <button class="btn btn-success" id="downloadBtn">
-                                <i class="fas fa-download"></i> Download Enriched CSV
-                            </button>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <button class="btn btn-success" id="downloadBtn">
+                                    <i class="fas fa-download"></i> Download Enriched CSV
+                                </button>
+                                <button class="btn btn-outline-primary" id="addMoreBtn">
+                                    <i class="fas fa-layer-group"></i> Enrich with Another Dataset
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -324,6 +404,8 @@
         let enrichedData = null;
         let currentJobId = null;
         let layersById = {};
+        let accumulateNext = false;
+        let baseOutputFilename = null;
 
         // Initialize application
         document.addEventListener('DOMContentLoaded', function() {
@@ -370,6 +452,8 @@
             // Enrichment
             document.getElementById('enrichBtn').addEventListener('click', startEnrichment);
             document.getElementById('downloadBtn').addEventListener('click', downloadEnrichedData);
+            const addMoreBtn = document.getElementById('addMoreBtn');
+            if (addMoreBtn) addMoreBtn.addEventListener('click', promptAddMore);
             document.getElementById('fetchBandsBtn').addEventListener('click', fetchCustomBands);
             const customCard = document.getElementById('customDatasetCard');
             if (customCard) {
@@ -382,9 +466,7 @@
                 });
             }
             
-            // Variable selection controls
-            document.getElementById('selectAllBtn').addEventListener('click', selectAllVariables);
-            document.getElementById('clearAllBtn').addEventListener('click', clearAllVariables);
+            // Variable selection controls removed (Select All / Clear All)
             
             // Progress controls
             document.getElementById('cancelBtn').addEventListener('click', cancelEnrichmentJob);
@@ -593,9 +675,9 @@
                 selectedLayer.variables.forEach(v => {
                     const id = `var_${v}`;
                     const wrapper = document.createElement('div');
-                    wrapper.className = 'form-check form-check-inline';
+                    wrapper.className = 'variable-pill';
                     wrapper.innerHTML = `
-                        <input class="form-check-input" type="checkbox" id="${id}" value="${v}">
+                        <input class="form-check-input" type="checkbox" id="${id}" value="${v}" onchange="updateSelectedCount()">
                         <label class="form-check-label" for="${id}">${v}</label>
                     `;
                     variableContainer.appendChild(wrapper);
@@ -607,15 +689,22 @@
 
         function updateDateRangeVisibility(assetType) {
             const dateStep = document.getElementById('dateRangeStep');
+            const temporalOpts = document.getElementById('temporalOptions');
             if (!selectedLayer) {
                 dateStep.style.display = 'none';
+                if (temporalOpts) temporalOpts.style.display = 'none';
                 return;
             }
             // Show for curated non-static; for custom, show after bands fetched (assetType)
             if (selectedLayer.id !== 'CUSTOM') {
                 dateStep.style.display = (selectedLayer.temporal_resolution !== 'static') ? 'block' : 'none';
+                // Curated ImageCollections where temporal options apply
+                const isIC = (selectedLayer.id === 'TERRACLIMATE' || selectedLayer.id === 'MODIS_NDVI');
+                if (temporalOpts) temporalOpts.style.display = isIC ? 'block' : 'none';
             } else {
-                dateStep.style.display = (assetType === 'ImageCollection') ? 'block' : 'none';
+                const show = (assetType === 'ImageCollection');
+                dateStep.style.display = show ? 'block' : 'none';
+                if (temporalOpts) temporalOpts.style.display = show ? 'block' : 'none';
             }
             document.getElementById('enrichmentStep').style.display = 'block';
         }
@@ -663,6 +752,21 @@
 
             if (Object.keys(dateRange).length > 0) {
                 requestData.date_range = dateRange;
+                // Include temporal options when date range is specified
+                const tsEl = document.querySelector('input[name="temporalStrategy"]:checked');
+                if (tsEl) {
+                    requestData.layer_config.temporal_strategy = tsEl.value; // most_recent | oldest | mean
+                }
+                const includeStd = document.getElementById('includeStd');
+                if (includeStd) {
+                    requestData.layer_config.include_std = !!includeStd.checked;
+                }
+            }
+
+            // Accumulation mode: append to prior enriched CSV
+            if (accumulateNext && enrichedData && enrichedData.output_filename) {
+                requestData.accumulate = true;
+                requestData.base_output_filename = enrichedData.output_filename;
             }
 
             // Show progress
@@ -691,7 +795,21 @@
             })
             .finally(() => {
                 document.getElementById('enrichBtn').disabled = false;
+                // Reset accumulation flag after use
+                accumulateNext = false;
             });
+        }
+
+        function promptAddMore() {
+            if (!enrichedData || !enrichedData.output_filename) {
+                alert('Please complete the first enrichment before adding more.');
+                return;
+            }
+            const proceed = confirm('Enrich with another dataset? Your current enriched columns will be preserved.');
+            if (!proceed) return;
+            document.getElementById('layerSelectionStep').scrollIntoView({ behavior: 'smooth' });
+            accumulateNext = true;
+            baseOutputFilename = enrichedData.output_filename;
         }
 
         function pollJobStatus() {
@@ -792,9 +910,9 @@
                 data.bands.forEach(b => {
                     const id = `var_${b}`;
                     const wrapper = document.createElement('div');
-                    wrapper.className = 'form-check form-check-inline';
+                    wrapper.className = 'variable-pill';
                     wrapper.innerHTML = `
-                        <input class="form-check-input" type="checkbox" id="${id}" value="${b}">
+                        <input class="form-check-input" type="checkbox" id="${id}" value="${b}" onchange="updateSelectedCount()">
                         <label class="form-check-label" for="${id}">${b}</label>
                     `;
                     variableContainer.appendChild(wrapper);
@@ -831,15 +949,16 @@
         window.fetchCustomBands = fetchCustomBands;
         window.updateDateRangeVisibility = updateDateRangeVisibility;
         window.handleDatasetChange = handleDatasetChange;
+        window.updateSelectedCount = updateSelectedCount;
 
-        function selectAllVariables() {
-            const checkboxes = document.querySelectorAll('#variableCheckboxes input[type="checkbox"]');
-            checkboxes.forEach(cb => cb.checked = true);
-        }
+        // Select All / Clear All utilities removed
 
-        function clearAllVariables() {
-            const checkboxes = document.querySelectorAll('#variableCheckboxes input[type="checkbox"]');
-            checkboxes.forEach(cb => cb.checked = false);
+        function updateSelectedCount() {
+            const count = document.querySelectorAll('#variableCheckboxes input[type="checkbox"]:checked').length;
+            const badge = document.getElementById('selectedCount');
+            if (badge) {
+                badge.textContent = `${count} selected`;
+            }
         }
 
         function showEnrichmentResult() {
