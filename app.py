@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import math
 import pandas as pd
 import ee
 from flask import Flask, request, jsonify, render_template, send_file
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 import threading
 import time
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Any
 
 # Load environment variables
 load_dotenv()
@@ -136,9 +137,12 @@ def detect_csv_columns(csv_file):
             elif any(keyword in col_lower for keyword in ['lon', 'long', 'longitude', 'x']):
                 suggestions['lon'] = col
         
+        # Build JSON-safe preview (replace NaN/NA with None)
+        preview_df = df.copy()
+        preview_df = preview_df.where(pd.notnull(preview_df), None)
         return {
             'columns': columns,
-            'preview': df.to_dict('records'),
+            'preview': preview_df.to_dict('records'),
             'suggestions': suggestions
         }
     except Exception as e:
@@ -202,6 +206,30 @@ def _chunk_dataframe_rows(df: pd.DataFrame, batch_size: int):
     for start in range(0, num_rows, batch_size):
         end = min(start + batch_size, num_rows)
         yield df.iloc[start:end]
+
+def _make_json_safe(value: Any) -> Any:
+    """Recursively replace NaN/Inf values with None so JSON is valid."""
+    try:
+        # Use pandas to detect NA for scalars
+        if isinstance(value, float):
+            if math.isnan(value) or math.isinf(value):
+                return None
+            return value
+        if value is None:
+            return None
+        # Pandas NA-like
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+        if isinstance(value, dict):
+            return {k: _make_json_safe(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_make_json_safe(v) for v in value]
+        return value
+    except Exception:
+        return value
 
 def _safe_enrich_with_retries(points_df: pd.DataFrame, layer_config: dict, date_range: Optional[dict], max_retries: int = 3, base_delay: float = 1.0) -> pd.DataFrame:
     """Call enrich_data_with_gee with retries and exponential backoff."""
@@ -337,14 +365,16 @@ def _process_enrichment_job(job_id: str, filepath: str, column_mapping: dict, la
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
         result_df.to_csv(output_path, index=False)
 
-        # Preview
-        preview_records = result_df.head(10).to_dict('records')
+        # Preview (ensure JSON-safe: convert NaN/NaT to None)
+        preview_df = result_df.head(10).copy()
+        preview_df = preview_df.where(pd.notnull(preview_df), None)
+        preview_records = preview_df.to_dict('records')
 
         jobs[job_id].update({
             'status': 'completed',
             'message': 'Enrichment completed',
             'output_filename': output_filename,
-            'preview': preview_records,
+            'preview': _make_json_safe(preview_records),
             'progress': 100,
             'eta_seconds': 0
         })
@@ -498,11 +528,11 @@ def upload_csv():
             if column_info is None:
                 return jsonify({'error': 'Failed to read CSV file'}), 400
             
-            return jsonify({
+            return jsonify(_make_json_safe({
                 'message': 'File uploaded successfully',
                 'filename': filename,
                 'column_info': column_info
-            })
+            }))
         else:
             return jsonify({'error': 'Invalid file type. Please upload a CSV file.'}), 400
             
@@ -559,11 +589,14 @@ def enrich_data():
         output_path = os.path.join(app.config['UPLOAD_FOLDER'], output_filename)
         result_df.to_csv(output_path, index=False)
         
-        return jsonify({
+        # Build preview with JSON-safe values
+        preview_df = result_df.head(10).copy()
+        preview_df = preview_df.where(pd.notnull(preview_df), None)
+        return jsonify(_make_json_safe({
             'message': 'Data enriched successfully',
             'output_filename': output_filename,
-            'preview': result_df.head(10).to_dict('records')
-        })
+            'preview': preview_df.to_dict('records')
+        }))
         
     except Exception as e:
         logger.error(f"Error enriching data: {str(e)}")
@@ -670,11 +703,11 @@ def get_enrichment_result(job_id: str):
         return jsonify({'error': 'Job not found'}), 404
     if job.get('status') != 'completed':
         return jsonify({'error': 'Job not completed'}), 400
-    return jsonify({
+    return jsonify(_make_json_safe({
         'message': 'Data enriched successfully',
         'output_filename': job.get('output_filename'),
         'preview': job.get('preview', [])
-    })
+    }))
 
 @app.route('/api/download/<filename>')
 def download_file(filename):
