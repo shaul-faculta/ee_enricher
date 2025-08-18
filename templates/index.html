@@ -977,7 +977,16 @@
                 ).join('');
             }
 
+            // Hide progress UI and reveal results
+            const progress = document.getElementById('progressContainer');
+            if (progress) progress.style.display = 'none';
+            const enrichmentStep = document.getElementById('enrichmentStep');
+            if (enrichmentStep && enrichmentStep.style.display === 'none') {
+                enrichmentStep.style.display = 'block';
+            }
             resultDiv.style.display = 'block';
+            // Bring the download section into view
+            resultDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         function downloadEnrichedData() {
