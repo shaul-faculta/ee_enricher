@@ -463,14 +463,24 @@ def enrich_data_with_gee(points_df, layer_config, date_range=None):
         elif layer_config['id'] == 'SRTM':
             image = ee.Image('USGS/SRTMGL1_003').select(selected_variables)
         elif layer_config['id'] == 'CUSTOM':
-            # Custom dataset: if temporal strategy provided, treat as ImageCollection; otherwise use auto-detect builder
             gee_id = layer_config['gee_id']
-            if temporal_strategy:
+            # Use the explicit asset_type if available, otherwise try to auto-detect based on temporal_strategy
+            if layer_config.get('asset_type') == 'ImageCollection':
+                collection = ee.ImageCollection(gee_id)
+                image = build_image_from_collection(collection, selected_variables)
+            elif layer_config.get('asset_type') == 'Image':
+                image = ee.Image(gee_id).select(selected_variables)
+            elif temporal_strategy: # Fallback to temporal_strategy if asset_type not explicitly set
                 collection = ee.ImageCollection(gee_id)
                 image = build_image_from_collection(collection, selected_variables)
             else:
-                # Auto-detect and select first image if ImageCollection
+                # Final fallback: auto-detect and select first image if ImageCollection
                 image = build_image_from_asset(gee_id, selected_variables, date_range)
+        elif layer_config.get('asset_type') == 'Image': # Explicitly treat as Image
+            image = ee.Image(layer_config['gee_id']).select(selected_variables)
+        elif layer_config.get('asset_type') == 'ImageCollection': # Explicitly treat as ImageCollection
+            collection = ee.ImageCollection(layer_config['gee_id'])
+            image = build_image_from_collection(collection, selected_variables)
         else:
             raise Exception(f"Unsupported layer: {layer_config['id']}")
         
@@ -621,6 +631,16 @@ def start_enrichment_job():
 
         if not ee_initialized:
             return jsonify({'error': 'Earth Engine not initialized'}), 500
+
+        # For custom layers, need to store the detected asset_type (Image or ImageCollection)
+        # that was determined by fetchCustomBands on the frontend.
+        if layer_config.get('id') == 'CUSTOM' and not layer_config.get('asset_type'):
+            # Attempt to re-detect if not provided, for robustness
+            try:
+                asset_type, _ = detect_dataset_type_and_first_image(layer_config.get('gee_id'))
+                layer_config['asset_type'] = asset_type
+            except Exception as e:
+                return jsonify({'error': f'Could not determine type of custom asset: {str(e)}'}), 400
 
         # Validate that at least one variable/band is selected
         if not (layer_config.get('selected_variable') or layer_config.get('selected_variables')):

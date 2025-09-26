@@ -640,8 +640,9 @@
                 layersById['CUSTOM'] = { id: 'CUSTOM', name: 'Custom Dataset', variables: [], temporal_resolution: '', spatial_resolution: '' };
             }
             selectedLayer = layersById[selectedId] || null;
+            selectedLayer.asset_type = selectedLayer.asset_type || null; // Initialize asset_type
             showLayerDetails();
-            updateDateRangeVisibility();
+            updateDateRangeVisibility(selectedLayer.asset_type);
         }
 
         function showLayerDetails() {
@@ -741,6 +742,10 @@
                     return;
                 }
                 layerConfig.gee_id = customGeeId;
+                // Pass the detected asset type for custom datasets
+                if (selectedLayer.asset_type) {
+                    layerConfig.asset_type = selectedLayer.asset_type;
+                }
             }
 
             const requestData = {
@@ -917,17 +922,22 @@
                     `;
                     variableContainer.appendChild(wrapper);
                 });
-                
+
+                // Store the detected type in selectedLayer for custom datasets
+                if (selectedLayer && selectedLayer.id === 'CUSTOM') {
+                    selectedLayer.asset_type = data.type;
+                }
+
                 // Show detected type and scale
                 const detectedType = document.getElementById('detectedType');
                 const badge = document.getElementById('detectedTypeBadge');
                 const scaleText = document.getElementById('detectedScaleText');
-                
+
                 if (data.type) {
                     badge.textContent = data.type;
                     badge.className = 'badge ' + (data.type === 'ImageCollection' ? 'bg-info' : 'bg-secondary');
                     detectedType.style.display = 'block';
-                    
+
                     if (data.scale_m) {
                         scaleText.textContent = `Native scale: ${data.scale_m.toFixed(0)}m`;
                     }
